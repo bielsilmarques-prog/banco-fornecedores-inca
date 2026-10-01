@@ -3,9 +3,6 @@ import pandas as pd
 import time
 import re
 
-# UASG 250052 = Instituto Nacional de Câncer - INCA
-UASG_INCA = "250052"
-
 def consultar_dados_cnpj(cnpj):
     cnpj_limpo = re.sub(r'\D', '', str(cnpj or ''))
     if len(cnpj_limpo) != 14:
@@ -34,80 +31,97 @@ def consultar_dados_cnpj(cnpj):
     return {}
 
 
-def buscar_todos_contratos_comprasgov(uasg=UASG_INCA, max_paginas=10):
-    resultados = []
-    print("=" * 70)
-    print(f"MAPEANDO BASE COMPLETA DE CONTRATOS E FORNECEDORES - INCA (UASG {uasg})")
-    print("=" * 70)
-
-    # API de Contratos do Compras.gov.br (dados abertos)
-    url_base = "https://contratos.comprasnet.gov.br/api/contrato/ug"
+def buscar_fornecedores_saude_nacional(data_inicio, data_fim, paginas_max=15):
+    url_pncp = "https://pncp.gov.br/api/consulta/v1/contratacoes/publicacao"
     
-    for pag in range(1, max_paginas + 1):
-        url = f"{url_base}/{uasg}?page={pag}"
-        try:
-            res = requests.get(url, timeout=15)
-            if res.status_code != 200:
-                print(f"   [-] Final da consulta ou limite atingido na página {pag}.")
+    # Modalidades mais comuns de compras de medicamentos: Pregão (6, 8) e Dispensa/Inexigibilidade (14, 9, 10)
+    modalidades = ["6", "8", "9", "10", "14"]
+    
+    # Termos abrangentes cobrindo INCA, oncologia, medicamentos e insumos de saúde em geral
+    palavras_chave = [
+        "medicamento", "medicamentos", "oncologico", "oncológico", 
+        "quimioterápico", "quimioterapico", "farmac", "hospitalar", 
+        "inca", "câncer", "cancer", "saude", "saúde", "insumos medicos"
+    ]
+    
+    resultados = []
+    print("=" * 75)
+    print("MAPEAMENTO NACIONAL DE FORNECEDORES DE MEDICAMENTOS E SAÚDE (TODOS OS ÓRGÃOS)")
+    print("=" * 75)
+    
+    for modalidade in modalidades:
+        print(f"\n[+] Consultando Modalidade de Contratação {modalidade}...")
+        for pagina in range(1, paginas_max + 1):
+            params = {
+                "dataInicial": data_inicio,
+                "dataFinal": data_fim,
+                "codigoModalidadeContratacao": modalidade,
+                "pagina": pagina,
+                "tamanhoPagina": 50
+            }
+            
+            try:
+                res = requests.get(url_pncp, params=params, timeout=15)
+                
+                if res.status_code in [204, 404]:
+                    break
+                if res.status_code != 200:
+                    print(f"   [-] Status {res.status_code} na página {pagina}")
+                    break
+                
+                dados_json = res.json()
+                itens = dados_json.get('data', []) if isinstance(dados_json, dict) else []
+                if not itens:
+                    break
+                
+                for item in itens:
+                    orgao = item.get('orgaoEntidade', {}).get('razaoSocial', '')
+                    unidade = item.get('unidadeOrgao', {}).get('nomeUnidade', '')
+                    objeto = item.get('objetoContratacao', '')
+                    texto_completo = f"{orgao} {unidade} {objeto}".lower()
+                    
+                    if any(termo in texto_completo for termo in palavras_chave):
+                        cnpj_fornecedor = item.get('niFornecedor')
+                        
+                        registro = {
+                            "Órgão Comprador": orgao,
+                            "Unidade / Hospital": unidade,
+                            "CNPJ Órgão": item.get('orgaoEntidade', {}).get('cnpj'),
+                            "UF Órgão": item.get('unidadeOrgao', {}).get('ufSigla'),
+                            "Objeto da Compra": objeto,
+                            "Valor Total Estimado (R$)": item.get('valorTotalEstimado'),
+                            "Modalidade": item.get('modalidadeNome'),
+                            "Data Publicação": item.get('dataPublicacaoPncp'),
+                            "Razão Social Fornecedor": item.get('nomeRazaoSocialFornecedor', 'Não informado'),
+                            "CNPJ Fornecedor": cnpj_fornecedor
+                        }
+                        resultados.append(registro)
+                        
+            except Exception as e:
+                print(f"   [!] Erro na requisição ao PNCP: {e}")
                 break
                 
-            dados = res.json()
-            contratos = dados.get('data', []) if isinstance(dados, dict) else dados
-            if not contratos:
-                break
-
-            print(f"   [+] Página {pag}: {len(contratos)} registros encontrados.")
-
-            for c in contratos:
-                cnpj_fornecedor = c.get('fornecedor', {}).get('cnpj', '') or c.get('cnpj_cpf_fornecedor', '')
-                razao_social = c.get('fornecedor', {}).get('nome', '') or c.get('nome_fornecedor', '')
-                
-                registro = {
-                    "Órgão Comprador": "INSTITUTO NACIONAL DE CÂNCER - INCA",
-                    "UASG": uasg,
-                    "Número Contrato/Ata": c.get('numero_contrato', c.get('numero', '')),
-                    "Objeto / Medicamento": c.get('objeto', ''),
-                    "Valor Total (R$)": c.get('valor_total', c.get('valor_inicial', 0)),
-                    "Data Início Vigência": c.get('data_inicio_vigencia', ''),
-                    "Data Fim Vigência": c.get('data_fim_vigencia', ''),
-                    "Razão Social Fornecedor": razao_social if razao_social else "Não Informado",
-                    "CNPJ Fornecedor": cnpj_fornecedor
-                }
-                resultados.append(registro)
-
-        except Exception as e:
-            print(f"   [!] Erro na conexão com Compras.gov.br: {e}")
-            break
-
-    print(f"\n[✓] Total de contratações/fornecedores localizados no INCA: {len(resultados)}")
+    print(f"\n[✓] Total de contratações/fornecedores encontrados no Brasil: {len(resultados)}")
     return resultados
 
 
 def enriquecer_e_gerar_excel(lista_contratacoes, arquivo_saida="fornecedores_inca_saude.xlsx"):
     if not lista_contratacoes:
-        print("\n[-] Nenhum contrato localizado na API. Gerando arquivo base para garantir estrutura...")
-        lista_contratacoes = [{
-            "Órgão Comprador": "INSTITUTO NACIONAL DE CÂNCER - INCA",
-            "UASG": UASG_INCA,
-            "Número Contrato/Ata": "0001/2025",
-            "Objeto / Medicamento": "Aquisição de medicamentos e insumos oncológicos hospitalares",
-            "Valor Total (R$)": 250000.00,
-            "Data Início Vigência": "2025-01-01",
-            "Data Fim Vigência": "2026-01-01",
-            "Razão Social Fornecedor": "FORNECEDORA FARMACEUTICA LTDA",
-            "CNPJ Fornecedor": "33000167000101"
-        }]
-
+        print("\n[-] Nenhum dado localizado. Gerando arquivo padrão...")
+        return
+        
     df = pd.DataFrame(lista_contratacoes)
     
-    # Filtrar CNPJs válidos para enriquecimento de e-mail e telefone
+    # Remove registros duplicados do mesmo fornecedor vendendo o mesmo objeto
+    df = df.drop_duplicates(subset=["CNPJ Fornecedor", "Objeto da Compra"], keep="first")
+    
     cnpjs_unicos = [c for c in df['CNPJ Fornecedor'].dropna().unique() if len(re.sub(r'\D', '', str(c))) == 14]
     
-    print(f"\n[+] Buscando contatos de e-mail e telefone para {len(cnpjs_unicos)} fornecedores únicos...")
+    print(f"\n[+] Consultando e-mail, telefone e localização para {len(cnpjs_unicos)} fornecedores únicos...")
     
     mapa_contatos = {}
     for idx, cnpj in enumerate(cnpjs_unicos, start=1):
-        print(f"    ({idx}/{len(cnpjs_unicos)}) Enriquecendo dados do CNPJ: {cnpj}")
+        print(f"    ({idx}/{len(cnpjs_unicos)}) Enriquecendo CNPJ: {cnpj}")
         mapa_contatos[cnpj] = consultar_dados_cnpj(cnpj)
         time.sleep(0.2)
         
@@ -126,19 +140,29 @@ def enriquecer_e_gerar_excel(lista_contratacoes, arquivo_saida="fornecedores_inc
         "Município Fornecedor",
         "Situação Cadastral",
         "Órgão Comprador",
-        "UASG",
-        "Número Contrato/Ata",
-        "Objeto / Medicamento",
-        "Valor Total (R$)",
-        "Data Início Vigência",
-        "Data Fim Vigência"
+        "Unidade / Hospital",
+        "UF Órgão",
+        "Objeto da Compra",
+        "Valor Total Estimado (R$)",
+        "Modalidade",
+        "Data Publicação"
     ]
     
     df = df.reindex(columns=colunas_finais)
     df.to_excel(arquivo_saida, index=False)
-    print(f"\n[✓] Sucesso! Banco de fornecedores do INCA salvo em: '{arquivo_saida}'")
+    print(f"\n[✓] Sucesso! Base nacional de fornecedores de saúde salva em: '{arquivo_saida}'")
 
 
 if __name__ == "__main__":
-    contratacoes = buscar_todos_contratos_comprasgov(uasg=UASG_INCA, max_paginas=20)
+    # Período de busca expandido (2024 a 2026)
+    DATA_INICIAL = "20240101"
+    DATA_FINAL = "20261231"
+    
+    # Faz varredura nacional em até 15 páginas por modalidade no PNCP
+    contratacoes = buscar_fornecedores_saude_nacional(
+        data_inicio=DATA_INICIAL,
+        data_fim=DATA_FINAL,
+        paginas_max=15
+    )
+    
     enriquecer_e_gerar_excel(contratacoes, arquivo_saida="fornecedores_inca_saude.xlsx")
