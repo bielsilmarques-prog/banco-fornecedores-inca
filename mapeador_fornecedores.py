@@ -137,10 +137,29 @@ def enriquecer_e_gerar_excel(lista_contratacoes, arquivo_saida="fornecedores_inc
 
 
 if __name__ == "__main__":
-    DATA_INICIAL = "20250101"
-    DATA_FINAL = "20260301"
-    TERMOS_BUSCA = ["INCA", "Instituto Nacional de Câncer", "medicamento", "oncologico", "quimioterápico", "farmac"]
-    MAX_PAGINAS = 5 
+    # Ajustado para busca no ano de 2025/2026 no formato AAAA-MM-DD
+    DATA_INICIAL = "2025-01-01"
+    DATA_FINAL = "2026-12-31"
+    
+    # Palavras-chave ampliadas para garantir retornos
+    TERMOS_BUSCA = ["inca", "câncer", "cancer", "saude", "saúde", "medicamento", "hospital", "equipamento", "farmac"]
+    MAX_PAGINAS = 10 
+    
+    contratacoes = buscar_fornecedores_pncp(
+        data_inicio=DATA_INICIAL,
+        data_fim=DATA_FINAL,
+        palavras_chave=TERMOS_BUSCA,
+        paginas_max=MAX_PAGINAS
+    )
+    
+    enriquecer_e_gerar_excel(contratacoes, arquivo_saida="fornecedores_inca_saude.xlsx")if __name__ == "__main__":
+    # Ajustado para busca no ano de 2025/2026 no formato AAAA-MM-DD
+    DATA_INICIAL = "2025-01-01"
+    DATA_FINAL = "2026-12-31"
+    
+    # Palavras-chave ampliadas para garantir retornos
+    TERMOS_BUSCA = ["inca", "câncer", "cancer", "saude", "saúde", "medicamento", "hospital", "equipamento", "farmac"]
+    MAX_PAGINAS = 10 
     
     contratacoes = buscar_fornecedores_pncp(
         data_inicio=DATA_INICIAL,
