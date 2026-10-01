@@ -31,26 +31,28 @@ def consultar_dados_cnpj(cnpj):
     return {}
 
 
-def buscar_fornecedores_saude_nacional(data_inicio, data_fim, paginas_max=15):
+def buscar_todos_medicamentos_brasil(data_inicio, data_fim, paginas_max=20):
     url_pncp = "https://pncp.gov.br/api/consulta/v1/contratacoes/publicacao"
     
-    # Modalidades mais comuns de compras de medicamentos: Pregão (6, 8) e Dispensa/Inexigibilidade (14, 9, 10)
+    # Modalidades mais comuns de compras públicas de medicamentos e saúde
     modalidades = ["6", "8", "9", "10", "14"]
     
-    # Termos abrangentes cobrindo INCA, oncologia, medicamentos e insumos de saúde em geral
-    palavras_chave = [
-        "medicamento", "medicamentos", "oncologico", "oncológico", 
-        "quimioterápico", "quimioterapico", "farmac", "hospitalar", 
-        "inca", "câncer", "cancer", "saude", "saúde", "insumos medicos"
+    # Termos ultragenericos para capturar QUALQUER tipo de medicamento, farmacia e insumo
+    termos_medicamentos = [
+        "medicament", "medicacao", "medicação", "fármac", "farmac", "droga", 
+        "remedio", "remédio", "solucao injetavel", "solução injetável", 
+        "comprimido", "ampola", "frasco", "vacina", "insumo farmaceutico", 
+        "insumo farmacêutico", "oncolog", "quimioterap", "antibiotico", 
+        "imunoglobulina", "soro", "câncer", "cancer", "inca", "saude", "saúde"
     ]
     
     resultados = []
-    print("=" * 75)
-    print("MAPEAMENTO NACIONAL DE FORNECEDORES DE MEDICAMENTOS E SAÚDE (TODOS OS ÓRGÃOS)")
-    print("=" * 75)
+    print("=" * 80)
+    print("INICIANDO MAPEAMENTO NACIONAL DE TODOS OS FORNECEDORES DE MEDICAMENTOS (PNCP)")
+    print("=" * 80)
     
     for modalidade in modalidades:
-        print(f"\n[+] Consultando Modalidade de Contratação {modalidade}...")
+        print(f"\n[+] Varrendo Modalidade de Contratação {modalidade}...")
         for pagina in range(1, paginas_max + 1):
             params = {
                 "dataInicial": data_inicio,
@@ -78,9 +80,10 @@ def buscar_fornecedores_saude_nacional(data_inicio, data_fim, paginas_max=15):
                     orgao = item.get('orgaoEntidade', {}).get('razaoSocial', '')
                     unidade = item.get('unidadeOrgao', {}).get('nomeUnidade', '')
                     objeto = item.get('objetoContratacao', '')
-                    texto_completo = f"{orgao} {unidade} {objeto}".lower()
+                    texto_analise = f"{orgao} {unidade} {objeto}".lower()
                     
-                    if any(termo in texto_completo for termo in palavras_chave):
+                    # Se tiver QUALQUER indicativo de medicamento/farmácia
+                    if any(termo in texto_analise for termo in termos_medicamentos):
                         cnpj_fornecedor = item.get('niFornecedor')
                         
                         registro = {
@@ -88,7 +91,7 @@ def buscar_fornecedores_saude_nacional(data_inicio, data_fim, paginas_max=15):
                             "Unidade / Hospital": unidade,
                             "CNPJ Órgão": item.get('orgaoEntidade', {}).get('cnpj'),
                             "UF Órgão": item.get('unidadeOrgao', {}).get('ufSigla'),
-                            "Objeto da Compra": objeto,
+                            "Objeto / Descrição da Compra": objeto,
                             "Valor Total Estimado (R$)": item.get('valorTotalEstimado'),
                             "Modalidade": item.get('modalidadeNome'),
                             "Data Publicação": item.get('dataPublicacaoPncp'),
@@ -101,23 +104,23 @@ def buscar_fornecedores_saude_nacional(data_inicio, data_fim, paginas_max=15):
                 print(f"   [!] Erro na requisição ao PNCP: {e}")
                 break
                 
-    print(f"\n[✓] Total de contratações/fornecedores encontrados no Brasil: {len(resultados)}")
+    print(f"\n[✓] Total de contratações/fornecedores de medicamentos encontrados: {len(resultados)}")
     return resultados
 
 
 def enriquecer_e_gerar_excel(lista_contratacoes, arquivo_saida="fornecedores_inca_saude.xlsx"):
     if not lista_contratacoes:
-        print("\n[-] Nenhum dado localizado. Gerando arquivo padrão...")
+        print("\n[-] Nenhum registro localizado.")
         return
         
     df = pd.DataFrame(lista_contratacoes)
     
-    # Remove registros duplicados do mesmo fornecedor vendendo o mesmo objeto
-    df = df.drop_duplicates(subset=["CNPJ Fornecedor", "Objeto da Compra"], keep="first")
+    # Remove compras repetidas da mesma empresa para a mesma descrição
+    df = df.drop_duplicates(subset=["CNPJ Fornecedor", "Objeto / Descrição da Compra"], keep="first")
     
     cnpjs_unicos = [c for c in df['CNPJ Fornecedor'].dropna().unique() if len(re.sub(r'\D', '', str(c))) == 14]
     
-    print(f"\n[+] Consultando e-mail, telefone e localização para {len(cnpjs_unicos)} fornecedores únicos...")
+    print(f"\n[+] Buscando contatos de e-mail e telefone de {len(cnpjs_unicos)} distribuidores e laboratórios...")
     
     mapa_contatos = {}
     for idx, cnpj in enumerate(cnpjs_unicos, start=1):
@@ -142,7 +145,7 @@ def enriquecer_e_gerar_excel(lista_contratacoes, arquivo_saida="fornecedores_inc
         "Órgão Comprador",
         "Unidade / Hospital",
         "UF Órgão",
-        "Objeto da Compra",
+        "Objeto / Descrição da Compra",
         "Valor Total Estimado (R$)",
         "Modalidade",
         "Data Publicação"
@@ -150,19 +153,18 @@ def enriquecer_e_gerar_excel(lista_contratacoes, arquivo_saida="fornecedores_inc
     
     df = df.reindex(columns=colunas_finais)
     df.to_excel(arquivo_saida, index=False)
-    print(f"\n[✓] Sucesso! Base nacional de fornecedores de saúde salva em: '{arquivo_saida}'")
+    print(f"\n[✓] Sucesso! Base nacional de medicamentos e fornecedores salva em: '{arquivo_saida}'")
 
 
 if __name__ == "__main__":
-    # Período de busca expandido (2024 a 2026)
-    DATA_INICIAL = "20240101"
+    # Varredura nos dados de publicação recentes
+    DATA_INICIAL = "20250101"
     DATA_FINAL = "20261231"
     
-    # Faz varredura nacional em até 15 páginas por modalidade no PNCP
-    contratacoes = buscar_fornecedores_saude_nacional(
+    contratacoes = buscar_todos_medicamentos_brasil(
         data_inicio=DATA_INICIAL,
         data_fim=DATA_FINAL,
-        paginas_max=15
+        paginas_max=20
     )
     
     enriquecer_e_gerar_excel(contratacoes, arquivo_saida="fornecedores_inca_saude.xlsx")
